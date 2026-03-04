@@ -153,13 +153,13 @@ col_img, col_tbl = st.columns([1, 2], gap="medium")  # tweak ratios as you like
 with col_img:
     st.subheader("Stasjonskart")
     # Load image from file (can also be a URL or bytes)
-    img = Image.open("Oekokyst\Økokyst Nordsjøen.png")  # e.g., "data/photo.png"
+    img = Image.open("Oekokyst/Økokyst Nordsjøen.png")  # e.g., "data/photo.png"
     st.image(img, width='stretch')
 
     
 with col_tbl:
     st.subheader("Vannmiljøkoder")
-    df = pd.read_excel("Oekokyst\Stations Nordsjøen.xlsx", sheet_name='Koder')
+    df = pd.read_excel("Oekokyst/Stations Nordsjøen.xlsx", sheet_name='Koder')
     # df = pd.DataFrame({
     #     "Parameter": ["pH", "SO4", "EC"],
     #     "Kode": [7.2, 52.3, 440],
