@@ -25,7 +25,8 @@ from PIL import Image
 #   FILE_PATH = Path("data/my_workbook.xlsx")
 #   FILE_PATH = Path(r"C:\path\to\your\workbook.xlsx")
 #   FILE_PATH = Path("/Users/you/path/to/workbook.xlsx")
-FILE_PATH = Path(r"C:\GitHub\Dashboards\Oekokyst\merge-new.xlsx")
+FILE_PATH = Path("Oekokyst/merge-new.xlsx")
+
 NROWS = None  # Optional: limit rows per sheet (None = all)
 
 st.set_page_config(page_title="Økokyst Nordsjøen", layout="wide")
@@ -152,13 +153,13 @@ col_img, col_tbl = st.columns([1, 2], gap="medium")  # tweak ratios as you like
 with col_img:
     st.subheader("Stasjonskart")
     # Load image from file (can also be a URL or bytes)
-    img = Image.open(r"C:\GitHub\Dashboards\Oekokyst\Økokyst Nordsjøen.png")  # e.g., "data/photo.png"
+    img = Image.open("Oekokyst\Økokyst Nordsjøen.png")  # e.g., "data/photo.png"
     st.image(img, width='stretch')
 
     
 with col_tbl:
     st.subheader("Vannmiljøkoder")
-    df = pd.read_excel(r"C:\GitHub\Dashboards\Oekokyst\Stations Nordsjøen.xlsx", sheet_name='Koder')
+    df = pd.read_excel("Oekokyst\Stations Nordsjøen.xlsx", sheet_name='Koder')
     # df = pd.DataFrame({
     #     "Parameter": ["pH", "SO4", "EC"],
     #     "Kode": [7.2, 52.3, 440],
