@@ -25,7 +25,7 @@ from PIL import Image
 #   FILE_PATH = Path("data/my_workbook.xlsx")
 #   FILE_PATH = Path(r"C:\path\to\your\workbook.xlsx")
 #   FILE_PATH = Path("/Users/you/path/to/workbook.xlsx")
-FILE_PATH = Path(r"C:\GIT\Oekokyst\Data\merge.xlsx")
+FILE_PATH = Path(r"C:\GitHub\Dashboards\Oekokyst\merge.xlsx")
 NROWS = None  # Optional: limit rows per sheet (None = all)
 
 st.set_page_config(page_title="Økokyst Nordsjøen", layout="wide")
