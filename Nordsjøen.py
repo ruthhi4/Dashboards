@@ -25,12 +25,12 @@ from PIL import Image
 #   FILE_PATH = Path("data/my_workbook.xlsx")
 #   FILE_PATH = Path(r"C:\path\to\your\workbook.xlsx")
 #   FILE_PATH = Path("/Users/you/path/to/workbook.xlsx")
-FILE_PATH = Path("Oekokyst/merge-new.xlsx")
+FILE_PATH = Path("Oekokyst/merge-new2.xlsx")
 
 NROWS = None  # Optional: limit rows per sheet (None = all)
 
-st.set_page_config(page_title="Økokyst Nordsjøen", layout="wide")
-st.title("Økokyst Nordsjøen")
+st.set_page_config(page_title="Økokyst Nordsjøen og Skagerak", layout="wide")
+st.title("Økokyst Nordsjøen og Skagerak")
 
 # =========================
 # 📥 Load ALL sheets
@@ -148,12 +148,12 @@ def to_numeric(series: pd.Series) -> pd.Series:
 
 
 # ---- Row under the plot: image + table side-by-side ----
-col_img, col_tbl = st.columns([1, 2], gap="medium")  # tweak ratios as you like
+col_img, col_tbl = st.columns([2, 1], gap="medium")  # tweak ratios as you like
 
 with col_img:
     st.subheader("Stasjonskart")
     # Load image from file (can also be a URL or bytes)
-    img = Image.open("Oekokyst/Økokyst Nordsjøen.png")  # e.g., "data/photo.png"
+    img = Image.open("Oekokyst/Økokyst All.png")  # e.g., "data/photo.png"
     st.image(img, width='stretch')
 
     
@@ -176,7 +176,7 @@ with col_tbl:
 # =========================
 # 📈 Plot
 # =========================
-st.header("Plot")
+st.header("Oversiktsplot")
 
 fig, ax = plt.subplots(figsize=(11, 5.5))
 
@@ -247,7 +247,366 @@ with st.expander("🔎 Preview first rows of each selected sheet"):
 if skipped_info:
     st.info("**Notes:**\n- " + "\n- ".join(skipped_info))
 
+# =========================
+# 📆 Plot for selected years
+# =========================
+st.header("Sammenligning av valgte år")
 
+# Find available years for the selected stations
+available_years = set()
+
+for sheet in selected_sheets:
+    df_years = all_sheets[sheet].copy()
+
+    if time_col not in df_years.columns:
+        continue
+
+    dates = to_datetime(df_years[time_col])
+
+    available_years.update(
+        dates.dropna().dt.year.astype(int).tolist()
+    )
+
+available_years = sorted(available_years, reverse=True)
+
+if not available_years:
+    st.warning("Fant ingen gyldige år for de valgte stasjonene.")
+
+else:
+    # Select one or more years
+    selected_years = st.multiselect(
+        "Velg ett eller flere år",
+        options=available_years,
+        default=available_years[:1]
+    )
+
+    if not selected_years:
+        st.warning("Velg minst ett år.")
+
+    else:
+        fig_year, ax_year = plt.subplots(figsize=(11, 5.5))
+
+        series_plotted_year = 0
+        skipped_year = []
+
+        for sheet in selected_sheets:
+            df_year = all_sheets[sheet].copy()
+
+            if time_col not in df_year.columns:
+                skipped_year.append(
+                    f"Sheet '{sheet}' mangler "
+                    f"datokolonnen '{time_col}'."
+                )
+                continue
+
+            # Convert date column
+            df_year[time_col] = to_datetime(
+                df_year[time_col]
+            )
+
+            # Keep rows from selected years
+            df_year = df_year[
+                df_year[time_col].notna()
+                & df_year[time_col].dt.year.isin(
+                    selected_years
+                )
+            ].copy()
+
+            if df_year.empty:
+                skipped_year.append(
+                    f"Sheet '{sheet}' har ingen data "
+                    f"for de valgte årene."
+                )
+                continue
+
+            # Save the original year
+            df_year["plot_year"] = (
+                df_year[time_col].dt.year
+            )
+
+            # Create a common X-axis using the year 2000.
+            # Year 2000 is used because it supports 29 February.
+            df_year["plot_date"] = pd.to_datetime({
+                "year": 2000,
+                "month": df_year[time_col].dt.month,
+                "day": df_year[time_col].dt.day
+            })
+
+            df_year = df_year.sort_values("plot_date")
+
+            for y in y_cols:
+                if y not in df_year.columns:
+                    skipped_year.append(
+                        f"Sheet '{sheet}' mangler "
+                        f"parameteren '{y}'."
+                    )
+                    continue
+
+                df_year[y] = to_numeric(df_year[y])
+
+                for year in selected_years:
+                    year_data = df_year[
+                        df_year["plot_year"] == year
+                    ].copy()
+
+                    mask = (
+                        year_data["plot_date"].notna()
+                        & year_data[y].notna()
+                    )
+
+                    if not mask.any():
+                        skipped_year.append(
+                            f"Sheet '{sheet}' | '{y}': "
+                            f"ingen gyldige data for {year}."
+                        )
+                        continue
+
+                    ax_year.plot(
+                        year_data.loc[mask, "plot_date"],
+                        year_data.loc[mask, y],
+                        marker="o",
+                        linewidth=1.5,
+                        markersize=5,
+                        label=f"{sheet} | {y} | {year}"
+                    )
+
+                    series_plotted_year += 1
+
+        if series_plotted_year > 0:
+            # Show months on the X-axis
+            ax_year.xaxis.set_major_locator(
+                mdates.MonthLocator()
+            )
+
+            ax_year.xaxis.set_major_formatter(
+                mdates.DateFormatter("%b")
+            )
+
+            # Always show the complete year
+            ax_year.set_xlim(
+                pd.Timestamp("2000-01-01"),
+                pd.Timestamp("2000-12-31")
+            )
+
+            years_text = ", ".join(
+                str(year) for year in sorted(selected_years)
+            )
+
+            ax_year.set_title(
+                f"Sammenligning av år: {years_text}"
+            )
+
+            ax_year.set_xlabel("Måned")
+
+            ax_year.set_ylabel(
+                ", ".join(y_cols)
+                if len(y_cols) <= 3
+                else "Verdi"
+            )
+
+            ax_year.grid(True, alpha=0.3)
+
+            ax_year.legend(
+                loc="upper center",
+                bbox_to_anchor=(0.5, 1.18),
+                ncol=3,
+                frameon=False
+            )
+
+            fig_year.tight_layout()
+
+            st.pyplot(
+                fig_year,
+                width="stretch"
+            )
+
+            plt.close(fig_year)
+
+        else:
+            plt.close(fig_year)
+
+            st.warning(
+                "Ingen gyldige data å plotte "
+                "for de valgte årene."
+            )
+
+        if skipped_year:
+            with st.expander(
+                "Merknader for valgte år"
+            ):
+                for message in skipped_year:
+                    st.write(f"- {message}")
+
+# =========================
+# ❄️☀️ Seasonal averages
+# =========================
+st.header("Sesongmiddel")
+
+season_parameter = st.selectbox(
+    "Parameter",
+    options=y_candidates
+)
+
+# Create figures first
+fig_winter, ax_winter = plt.subplots(figsize=(5, 4))
+fig_summer, ax_summer = plt.subplots(figsize=(5, 4))
+
+# --------------------------------------------------
+# Populate winter and summer plots
+# --------------------------------------------------
+for sheet in selected_sheets:
+
+    df = all_sheets[sheet].copy()
+
+    if (
+        time_col not in df.columns
+        or season_parameter not in df.columns
+    ):
+        continue
+
+    df[time_col] = to_datetime(df[time_col])
+
+    df = df[df[time_col].notna()].copy()
+
+    if df.empty:
+        continue
+
+    df["year"] = df[time_col].dt.year
+    df["month"] = df[time_col].dt.month
+
+    df[season_parameter] = to_numeric(
+        df[season_parameter]
+    )
+
+    # ==================================
+    # WINTER
+    # ==================================
+    winter_df = df[
+        df["month"].isin([12, 1, 2])
+    ].copy()
+
+    if not winter_df.empty:
+
+        winter_df["season_year"] = np.where(
+            winter_df["month"] == 12,
+            winter_df["year"] + 1,
+            winter_df["year"]
+        )
+
+        winter_mean = (
+            winter_df
+            .dropna(subset=[season_parameter])
+            .groupby("season_year")[season_parameter]
+            .mean()
+            .reset_index()
+            .sort_values("season_year")
+        )
+
+        if not winter_mean.empty:
+
+            ax_winter.plot(
+                winter_mean["season_year"],
+                winter_mean[season_parameter],
+                marker="o",
+                linewidth=2,
+                label=sheet
+            )
+
+    # ==================================
+    # SUMMER
+    # ==================================
+    summer_df = df[
+        df["month"].isin([6, 7, 8])
+    ].copy()
+
+    if not summer_df.empty:
+
+        summer_df["season_year"] = (
+            summer_df["year"]
+        )
+
+        summer_mean = (
+            summer_df
+            .dropna(subset=[season_parameter])
+            .groupby("season_year")[season_parameter]
+            .mean()
+            .reset_index()
+            .sort_values("season_year")
+        )
+
+        if not summer_mean.empty:
+
+            ax_summer.plot(
+                summer_mean["season_year"],
+                summer_mean[season_parameter],
+                marker="o",
+                linewidth=2,
+                label=sheet
+            )
+
+# --------------------------------------------------
+# Match Y axis limits
+# --------------------------------------------------
+winter_ylim = ax_winter.get_ylim()
+summer_ylim = ax_summer.get_ylim()
+
+ymin = min(
+    winter_ylim[0],
+    summer_ylim[0]
+)
+
+ymax = max(
+    winter_ylim[1],
+    summer_ylim[1]
+)
+
+ax_winter.set_ylim(ymin, ymax)
+ax_summer.set_ylim(ymin, ymax)
+
+# --------------------------------------------------
+# Format plots
+# --------------------------------------------------
+for ax in [ax_winter, ax_summer]:
+
+    ax.xaxis.set_major_locator(
+        plt.MaxNLocator(integer=True)
+    )
+
+    ax.grid(True, alpha=0.3)
+
+    ax.legend(
+        fontsize=8,
+        frameon=False
+    )
+
+# Winter
+ax_winter.set_title("Vinter")
+ax_winter.set_xlabel("År")
+ax_winter.set_ylabel(season_parameter)
+
+# Summer
+ax_summer.set_title("Sommer")
+ax_summer.set_xlabel("År")
+ax_summer.set_ylabel(season_parameter)
+
+fig_winter.tight_layout()
+fig_summer.tight_layout()
+
+# --------------------------------------------------
+# Display side-by-side
+# --------------------------------------------------
+col_winter, col_summer = st.columns(2)
+
+with col_winter:
+    st.pyplot(
+        fig_winter,
+        width="stretch"
+    )
+
+with col_summer:
+    st.pyplot(
+        fig_summer,
+        width="stretch"
+    )
 
     
-
