@@ -25,7 +25,7 @@ from PIL import Image
 #   FILE_PATH = Path("data/my_workbook.xlsx")
 #   FILE_PATH = Path(r"C:\path\to\your\workbook.xlsx")
 #   FILE_PATH = Path("/Users/you/path/to/workbook.xlsx")
-FILE_PATH = Path("Oekokyst/merge-new2.xlsx")
+FILE_PATH = Path("Oekokyst/merge-new3.xlsx")
 
 NROWS = None  # Optional: limit rows per sheet (None = all)
 
@@ -138,14 +138,72 @@ def to_datetime(series: pd.Series) -> pd.Series:
     if pd.api.types.is_datetime64_any_dtype(series):
         return series
     try:
-        return pd.to_datetime(series, errors="coerce")
+        return pd.to_datetime(series, errors="coerce", format="mixed")
     except Exception:
         return pd.to_datetime(pd.Series([], dtype="float64"), errors="coerce")  # empty if utterly fails
 
 def to_numeric(series: pd.Series) -> pd.Series:
-    return pd.to_numeric(series, errors="coerce")
 
+    def convert_value(value):
 
+        if pd.isna(value):
+            return np.nan
+
+        value = str(value).strip()
+
+        # Handle values below detection limit
+        if value.startswith("<"):
+
+            value = (
+                value
+                .replace("<", "")
+                .replace("=", "")
+                .replace(",", ".")
+                .strip()
+            )
+
+            try:
+                return float(value) / 2
+            except ValueError:
+                return np.nan
+
+        # Handle ordinary numeric values
+        value = value.replace(",", ".")
+
+        try:
+            return float(value)
+        except ValueError:
+            return np.nan
+
+    return series.apply(convert_value)
+
+def to_numeric_loq(series):
+
+    def convert_value(value):
+
+        if pd.isna(value):
+            return np.nan
+
+        value = str(value).strip()
+
+        if value.startswith("<"):
+
+            value = value.replace("<", "")
+            value = value.replace(",", ".")
+
+            try:
+                return float(value) / 2
+            except:
+                return np.nan
+
+        value = value.replace(",", ".")
+
+        try:
+            return float(value)
+        except:
+            return np.nan
+
+    return series.apply(convert_value)
 
 # ---- Row under the plot: image + table side-by-side ----
 col_img, col_tbl = st.columns([2, 1], gap="medium")  # tweak ratios as you like
@@ -190,12 +248,29 @@ for sheet in selected_sheets:
         continue
 
     # Prepare time & sort
-    df[time_col] = to_datetime(df[time_col])
+    #df[time_col] = to_datetime(df[time_col])
+
+    #test
+    df[time_col] = pd.to_datetime(
+        df[time_col]
+            .astype(str)
+            .str.strip(),
+        errors="coerce", format="mixed"
+    )
+
+    df = df[df[time_col].notna()].copy()
+
+    df = df.sort_values(time_col)
+             
+
+
     df = df[df[time_col].notna()]
     if df.empty:
         skipped_info.append(f"Sheet '{sheet}' has no valid time values after parsing. Skipped.")
         continue
     df = df.sort_values(by=time_col)
+
+    
 
     for y in y_cols:
         if y not in df.columns:
@@ -260,6 +335,7 @@ for sheet in selected_sheets:
 
     if time_col not in df_years.columns:
         continue
+
 
     dates = to_datetime(df_years[time_col])
 
@@ -438,51 +514,216 @@ else:
                     st.write(f"- {message}")
 
 # =========================
-# ❄️☀️ Seasonal averages
+# ❄️☀️ Seasonal averages with boundary shading
 # =========================
 st.header("Sesongmiddel")
 
-season_parameter = st.selectbox(
-    "Parameter",
-    options=y_candidates
-)
-
-# Create figures first
-fig_winter, ax_winter = plt.subplots(figsize=(5, 4))
-fig_summer, ax_summer = plt.subplots(figsize=(5, 4))
 
 # --------------------------------------------------
-# Populate winter and summer plots
+# Boundary file configuration
+# --------------------------------------------------
+BOUNDARY_FILE = Path(
+    "Oekokyst/Boundary_values.xlsx"
+)
+
+BOUNDARY_SHEET = "Sheet1"
+
+
+# --------------------------------------------------
+# Load boundary values
+# --------------------------------------------------
+@st.cache_data(show_spinner=False)
+def load_boundary_values(
+    path: Path,
+    sheet_name: str
+) -> pd.DataFrame:
+
+    required_columns = {
+        "Parameter",
+        "Sesong",
+        "Klasse",
+        "Nedre",
+        "Ovre",
+        "Farge"
+    }
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Fant ikke grenseverdifilen: "
+            f"{path.resolve()}"
+        )
+
+    boundary_df = pd.read_excel(
+        path,
+        sheet_name=sheet_name,
+        engine="openpyxl"
+    )
+
+    # Clean column names
+    boundary_df.columns = [
+        str(column).strip()
+        for column in boundary_df.columns
+    ]
+
+    missing_columns = (
+        required_columns
+        - set(boundary_df.columns)
+    )
+
+    if missing_columns:
+        raise ValueError(
+            "Følgende kolonner mangler i "
+            "grenseverdifilen: "
+            + ", ".join(sorted(missing_columns))
+        )
+
+    # Clean text columns
+    text_columns = [
+        "Parameter",
+        "Sesong",
+        "Klasse",
+        "Farge"
+    ]
+
+    for column in text_columns:
+        boundary_df[column] = (
+            boundary_df[column]
+            .astype("string")
+            .str.strip()
+        )
+
+    # Convert decimal commas if necessary
+    for column in ["Nedre", "Ovre"]:
+
+        boundary_df[column] = (
+            boundary_df[column]
+            .astype("string")
+            .str.replace(",", ".", regex=False)
+        )
+
+        boundary_df[column] = pd.to_numeric(
+            boundary_df[column],
+            errors="coerce"
+        )
+
+    # Remove rows without complete boundaries
+    boundary_df = boundary_df.dropna(
+        subset=[
+            "Parameter",
+            "Sesong",
+            "Nedre",
+            "Ovre"
+        ]
+    ).copy()
+
+    # Remove invalid ranges
+    boundary_df = boundary_df[
+        boundary_df["Nedre"]
+        < boundary_df["Ovre"]
+    ].copy()
+
+    return boundary_df
+
+
+try:
+
+    boundary_values = load_boundary_values(
+        BOUNDARY_FILE,
+        BOUNDARY_SHEET
+    )
+
+    boundary_file_loaded = True
+
+except Exception as error:
+
+    boundary_values = pd.DataFrame(
+        columns=[
+            "Parameter",
+            "Sesong",
+            "Klasse",
+            "Nedre",
+            "Ovre",
+            "Farge"
+        ]
+    )
+
+    boundary_file_loaded = False
+
+    st.warning(
+        "Grenseverdiene kunne ikke leses. "
+        "Plottene vises uten bakgrunnsfarger. "
+        f"Detaljer: {error}"
+    )
+
+
+# --------------------------------------------------
+# Select one parameter
+# --------------------------------------------------
+season_parameter = st.selectbox(
+    "Parameter for sesongplot",
+    options=y_candidates,
+    key="season_parameter"
+)
+
+
+# --------------------------------------------------
+# Store seasonal results
+# --------------------------------------------------
+winter_results = {}
+summer_results = {}
+
+all_seasonal_values = []
+
+
+# --------------------------------------------------
+# Calculate seasonal averages
 # --------------------------------------------------
 for sheet in selected_sheets:
 
-    df = all_sheets[sheet].copy()
+    df_season = all_sheets[sheet].copy()
 
     if (
-        time_col not in df.columns
-        or season_parameter not in df.columns
+        time_col not in df_season.columns
+        or season_parameter not in df_season.columns
     ):
         continue
 
-    df[time_col] = to_datetime(df[time_col])
+    # Convert date column
+    df_season[time_col] = to_datetime(
+        df_season[time_col]
+    )
 
-    df = df[df[time_col].notna()].copy()
+    df_season = df_season[
+        df_season[time_col].notna()
+    ].copy()
 
-    if df.empty:
+    if df_season.empty:
         continue
 
-    df["year"] = df[time_col].dt.year
-    df["month"] = df[time_col].dt.month
+    # Create year and month columns
+    df_season["year"] = (
+        df_season[time_col].dt.year
+    )
 
-    df[season_parameter] = to_numeric(
-        df[season_parameter]
+    df_season["month"] = (
+        df_season[time_col].dt.month
+    )
+
+    # Convert selected parameter to numeric
+    df_season[season_parameter] = to_numeric(
+        df_season[season_parameter]
     )
 
     # ==================================
     # WINTER
+    #
+    # Winter 2025:
+    # December 2024
+    # January 2025
+    # February 2025
     # ==================================
-    winter_df = df[
-        df["month"].isin([12, 1, 2])
+    winter_df = df_season[
+        df_season["month"].isin([12, 1, 2])
     ].copy()
 
     if not winter_df.empty:
@@ -496,27 +737,32 @@ for sheet in selected_sheets:
         winter_mean = (
             winter_df
             .dropna(subset=[season_parameter])
-            .groupby("season_year")[season_parameter]
+            .groupby(
+                "season_year",
+                as_index=False
+            )[season_parameter]
             .mean()
-            .reset_index()
             .sort_values("season_year")
         )
 
         if not winter_mean.empty:
 
-            ax_winter.plot(
-                winter_mean["season_year"],
-                winter_mean[season_parameter],
-                marker="o",
-                linewidth=2,
-                label=sheet
+            winter_results[sheet] = winter_mean
+
+            all_seasonal_values.extend(
+                winter_mean[
+                    season_parameter
+                ].tolist()
             )
 
     # ==================================
     # SUMMER
+    #
+    # June, July and August
+    # in the same calendar year
     # ==================================
-    summer_df = df[
-        df["month"].isin([6, 7, 8])
+    summer_df = df_season[
+        df_season["month"].isin([6, 7, 8])
     ].copy()
 
     if not summer_df.empty:
@@ -528,85 +774,350 @@ for sheet in selected_sheets:
         summer_mean = (
             summer_df
             .dropna(subset=[season_parameter])
-            .groupby("season_year")[season_parameter]
+            .groupby(
+                "season_year",
+                as_index=False
+            )[season_parameter]
             .mean()
-            .reset_index()
             .sort_values("season_year")
         )
 
         if not summer_mean.empty:
 
-            ax_summer.plot(
-                summer_mean["season_year"],
-                summer_mean[season_parameter],
-                marker="o",
-                linewidth=2,
-                label=sheet
+            summer_results[sheet] = summer_mean
+
+            all_seasonal_values.extend(
+                summer_mean[
+                    season_parameter
+                ].tolist()
             )
 
-# --------------------------------------------------
-# Match Y axis limits
-# --------------------------------------------------
-winter_ylim = ax_winter.get_ylim()
-summer_ylim = ax_summer.get_ylim()
 
-ymin = min(
-    winter_ylim[0],
-    summer_ylim[0]
+# --------------------------------------------------
+# Calculate shared Y maximum from data only
+# --------------------------------------------------
+valid_seasonal_values = pd.to_numeric(
+    pd.Series(
+        all_seasonal_values,
+        dtype="float64"
+    ),
+    errors="coerce"
+).dropna()
+
+if not valid_seasonal_values.empty:
+
+    data_max = float(
+        valid_seasonal_values.max()
+    )
+
+    if data_max > 0:
+
+        # Add 10 percent headroom
+        common_ymax = data_max * 1.10
+
+    else:
+
+        common_ymax = 1.0
+
+else:
+
+    data_max = 0.0
+    common_ymax = 1.0
+
+
+# --------------------------------------------------
+# Boundary shading function
+# --------------------------------------------------
+def add_visible_boundary_shading(
+    ax,
+    limits_df: pd.DataFrame,
+    parameter: str,
+    season: str,
+    visible_ymax: float
+) -> bool:
+
+    if limits_df.empty:
+        return False
+
+    parameter_key = str(parameter).strip().casefold()
+    season_key = str(season).strip().casefold()
+
+    matching_limits = limits_df[
+        limits_df["Parameter"]
+        .str.casefold()
+        .eq(parameter_key)
+        &
+        limits_df["Sesong"]
+        .str.casefold()
+        .eq(season_key)
+    ].copy()
+
+    if matching_limits.empty:
+        return False
+
+    matching_limits = matching_limits.sort_values(
+        "Nedre"
+    )
+
+    shading_added = False
+
+    for _, boundary in matching_limits.iterrows():
+
+        lower_boundary = float(
+            boundary["Nedre"]
+        )
+
+        upper_boundary = float(
+            boundary["Ovre"]
+        )
+
+        # Class starts above visible range
+        if lower_boundary >= visible_ymax:
+            continue
+
+        visible_lower = max(
+            lower_boundary,
+            0.0
+        )
+
+        visible_upper = min(
+            upper_boundary,
+            visible_ymax
+        )
+
+        if visible_lower >= visible_upper:
+            continue
+
+        colour = boundary["Farge"]
+
+        if pd.isna(colour) or not str(colour).strip():
+            colour = "lightgrey"
+
+        ax.axhspan(
+            visible_lower,
+            visible_upper,
+            facecolor=str(colour),
+            alpha=0.25,
+            edgecolor="none",
+            label=str(boundary["Klasse"]),
+            zorder=0
+        )
+
+        shading_added = True
+
+    return shading_added
+
+
+# --------------------------------------------------
+# Create figures
+# --------------------------------------------------
+fig_winter, ax_winter = plt.subplots(
+    figsize=(5.5, 4.5)
 )
 
-ymax = max(
-    winter_ylim[1],
-    summer_ylim[1]
+fig_summer, ax_summer = plt.subplots(
+    figsize=(5.5, 4.5)
 )
 
-ax_winter.set_ylim(ymin, ymax)
-ax_summer.set_ylim(ymin, ymax)
 
 # --------------------------------------------------
-# Format plots
+# Add visible boundary shading
 # --------------------------------------------------
+winter_has_limits = add_visible_boundary_shading(
+    ax=ax_winter,
+    limits_df=boundary_values,
+    parameter=season_parameter,
+    season="Vinter",
+    visible_ymax=common_ymax
+)
+
+summer_has_limits = add_visible_boundary_shading(
+    ax=ax_summer,
+    limits_df=boundary_values,
+    parameter=season_parameter,
+    season="Sommer",
+    visible_ymax=common_ymax
+)
+
+
+# --------------------------------------------------
+# Use same station colour in both plots
+# --------------------------------------------------
+station_colors = {
+    sheet: plt.cm.tab10(index % 10)
+    for index, sheet
+    in enumerate(selected_sheets)
+}
+
+
+# --------------------------------------------------
+# Plot winter averages
+# --------------------------------------------------
+for sheet, winter_mean in winter_results.items():
+
+    ax_winter.plot(
+        winter_mean["season_year"],
+        winter_mean[season_parameter],
+        marker="o",
+        linewidth=2,
+        markersize=5,
+        color=station_colors[sheet],
+        label=sheet,
+        zorder=5
+    )
+
+
+# --------------------------------------------------
+# Plot summer averages
+# --------------------------------------------------
+for sheet, summer_mean in summer_results.items():
+
+    ax_summer.plot(
+        summer_mean["season_year"],
+        summer_mean[season_parameter],
+        marker="o",
+        linewidth=2,
+        markersize=5,
+        color=station_colors[sheet],
+        label=sheet,
+        zorder=5
+    )
+
+
+# --------------------------------------------------
+# Format axes
+# --------------------------------------------------
+ax_winter.set_title("Vinter")
+ax_summer.set_title("Sommer")
+
 for ax in [ax_winter, ax_summer]:
+
+    ax.set_xlabel("År")
+    ax.set_ylabel(season_parameter)
 
     ax.xaxis.set_major_locator(
         plt.MaxNLocator(integer=True)
     )
 
-    ax.grid(True, alpha=0.3)
-
-    ax.legend(
-        fontsize=8,
-        frameon=False
+    ax.grid(
+        True,
+        alpha=0.3,
+        zorder=1
     )
 
-# Winter
-ax_winter.set_title("Vinter")
-ax_winter.set_xlabel("År")
-ax_winter.set_ylabel(season_parameter)
+    # Same Y-axis on both plots.
+    # Maximum comes from data, not boundary values.
+    ax.set_ylim(
+        0,
+        common_ymax
+    )
 
-# Summer
-ax_summer.set_title("Sommer")
-ax_summer.set_xlabel("År")
-ax_summer.set_ylabel(season_parameter)
+
+# --------------------------------------------------
+# Add unique legends
+# --------------------------------------------------
+def add_unique_legend(ax):
+
+    handles, labels = (
+        ax.get_legend_handles_labels()
+    )
+
+    unique_items = {}
+
+    for handle, label in zip(
+        handles,
+        labels
+    ):
+
+        if label not in unique_items:
+            unique_items[label] = handle
+
+    if unique_items:
+
+        ax.legend(
+            unique_items.values(),
+            unique_items.keys(),
+            fontsize=7,
+            frameon=False,
+            loc="best"
+        )
+
+
+add_unique_legend(ax_winter)
+add_unique_legend(ax_summer)
+
+
+# --------------------------------------------------
+# Add message if seasonal data are absent
+# --------------------------------------------------
+if not winter_results:
+
+    ax_winter.text(
+        0.5,
+        0.5,
+        "Ingen vinterdata",
+        transform=ax_winter.transAxes,
+        horizontalalignment="center",
+        verticalalignment="center"
+    )
+
+if not summer_results:
+
+    ax_summer.text(
+        0.5,
+        0.5,
+        "Ingen sommerdata",
+        transform=ax_summer.transAxes,
+        horizontalalignment="center",
+        verticalalignment="center"
+    )
+
 
 fig_winter.tight_layout()
 fig_summer.tight_layout()
 
+
 # --------------------------------------------------
-# Display side-by-side
+# Display side by side
 # --------------------------------------------------
-col_winter, col_summer = st.columns(2)
+col_winter, col_summer = st.columns(
+    [1, 1],
+    gap="medium"
+)
 
 with col_winter:
+
     st.pyplot(
         fig_winter,
         width="stretch"
     )
 
+    if (
+        boundary_file_loaded
+        and not winter_has_limits
+    ):
+        st.caption(
+            f"Ingen vintergrenser funnet for "
+            f"`{season_parameter}`."
+        )
+
+
 with col_summer:
+
     st.pyplot(
         fig_summer,
         width="stretch"
     )
 
-    
+    if (
+        boundary_file_loaded
+        and not summer_has_limits
+    ):
+        st.caption(
+            f"Ingen sommergrenser funnet for "
+            f"`{season_parameter}`."
+        )
+
+
+plt.close(fig_winter)
+plt.close(fig_summer)
