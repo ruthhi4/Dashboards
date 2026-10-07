@@ -468,9 +468,9 @@ else:
                 str(year) for year in sorted(selected_years)
             )
 
-            ax_year.set_title(
-                f"Sammenligning av år: {years_text}"
-            )
+            #ax_year.set_title(
+            #    f"Sammenligning av år: {years_text}"
+            #)
 
             ax_year.set_xlabel("Måned")
 
