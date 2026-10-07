@@ -25,7 +25,7 @@ from PIL import Image
 #   FILE_PATH = Path("data/my_workbook.xlsx")
 #   FILE_PATH = Path(r"C:\path\to\your\workbook.xlsx")
 #   FILE_PATH = Path("/Users/you/path/to/workbook.xlsx")
-FILE_PATH = Path("Oekokyst/merge-new3.xlsx")
+FILE_PATH = Path("Oekokyst/merge-new2.xlsx")
 
 NROWS = None  # Optional: limit rows per sheet (None = all)
 
