@@ -4,17 +4,12 @@ Created on Sun Feb 15 08:24:23 2026
 
 @author: rutvin
 """
-
-
-
-
-
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from io import BytesIO
 from pathlib import Path
 from PIL import Image
 
@@ -26,6 +21,9 @@ from PIL import Image
 #   FILE_PATH = Path(r"C:\path\to\your\workbook.xlsx")
 #   FILE_PATH = Path("/Users/you/path/to/workbook.xlsx")
 FILE_PATH = Path("Oekokyst/merge-new2.xlsx")
+STATION_MAP_PATH = Path("Oekokyst/Økokyst All.png")
+STATION_CODES_PATH = Path("Oekokyst/Stations Nordsjøen.xlsx")
+SIKTEDYP_FILE = Path("Oekokyst/Siktedyp.xlsx")
 
 NROWS = None  # Optional: limit rows per sheet (None = all)
 
@@ -48,13 +46,14 @@ def load_excel_all_sheets(path: Path, nrows=None):
         cleaned[name] = df_
     return cleaned
 
-def likely_time_candidates(df: pd.DataFrame):
-    # Prefer datetime dtype columns, then common time-like names
-    dt_cols = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])]
-    if dt_cols:
-        return dt_cols
-    name_hits = [c for c in df.columns if str(c).lower() in {"time", "tid", "dato", "date", "datetime", "timestamp", "sampledate"}]
-    return name_hits if name_hits else df.columns.tolist()
+@st.cache_data(show_spinner=False)
+def load_station_map(contents: bytes) -> Image.Image:
+    with Image.open(BytesIO(contents)) as image:
+        return image.copy()
+
+@st.cache_data(show_spinner=False)
+def load_station_codes(contents: bytes) -> pd.DataFrame:
+    return pd.read_excel(BytesIO(contents), sheet_name="Koder")
 
 try:
     with st.spinner("Loading workbook…"):
@@ -110,13 +109,6 @@ if time_candidates:
 else:
     # Fallback to the first column and let downstream parsing try to coerce
     time_col = all_cols[0]
-    # st.warning(
-    #     f"Could not confidently detect a time column; using `{time_col}` as X. "
-    #     "Consider renaming your time column to something like 'Date', 'Datetime', or 'Timestamp'."
-    # )
-
-## Show (not editable) which column is used for X
-#st.sidebar.markdown(f"**Time column (X-axis):** `{time_col}`")
 
 # Y columns = remaining columns (can select multiple)
 y_candidates = [c for c in all_cols if c != time_col]
@@ -177,54 +169,32 @@ def to_numeric(series: pd.Series) -> pd.Series:
 
     return series.apply(convert_value)
 
-def to_numeric_loq(series):
-
-    def convert_value(value):
-
-        if pd.isna(value):
-            return np.nan
-
-        value = str(value).strip()
-
-        if value.startswith("<"):
-
-            value = value.replace("<", "")
-            value = value.replace(",", ".")
-
-            try:
-                return float(value) / 2
-            except:
-                return np.nan
-
-        value = value.replace(",", ".")
-
-        try:
-            return float(value)
-        except:
-            return np.nan
-
-    return series.apply(convert_value)
-
 # ---- Row under the plot: image + table side-by-side ----
 col_img, col_tbl = st.columns([2, 1], gap="medium")  # tweak ratios as you like
 
 with col_img:
     st.subheader("Stasjonskart")
-    # Load image from file (can also be a URL or bytes)
-    img = Image.open("Oekokyst/Økokyst All.png")  # e.g., "data/photo.png"
+    img = load_station_map(STATION_MAP_PATH.read_bytes())
     st.image(img, width='stretch')
 
     
 with col_tbl:
     st.subheader("Vannmiljøkoder")
-    df = pd.read_excel("Oekokyst/Stations Nordsjøen.xlsx", sheet_name='Koder')
-    # df = pd.DataFrame({
-    #     "Parameter": ["pH", "SO4", "EC"],
-    #     "Kode": [7.2, 52.3, 440],
-    #     "Enhet": ["-", "mg/L", "µS/cm"],
-    # })
-    # Use dataframe for scrollable, sortable table; table() for static
+    df = load_station_codes(STATION_CODES_PATH.read_bytes())
     st.dataframe(df, width='stretch', height=640)
+
+st.markdown(
+        """
+        <nav aria-label="Plottnavigasjon" style="display:flex; flex-wrap:wrap; gap:0.5rem; margin:1rem 0 2rem;">
+            <a href="#overview-plot" style="padding:0.45rem 0.75rem; border:1px solid currentColor; border-radius:4px; color:inherit; text-decoration:none;">Oversiktsplot</a>
+            <a href="#year-comparison-plot" style="padding:0.45rem 0.75rem; border:1px solid currentColor; border-radius:4px; color:inherit; text-decoration:none;">Sammenligning av år</a>
+            <a href="#winter-average-plot" style="padding:0.45rem 0.75rem; border:1px solid currentColor; border-radius:4px; color:inherit; text-decoration:none;">Vintermiddel</a>
+            <a href="#summer-average-plot" style="padding:0.45rem 0.75rem; border:1px solid currentColor; border-radius:4px; color:inherit; text-decoration:none;">Sommermiddel</a>
+            <a href="#siktedyp-plot" style="padding:0.45rem 0.75rem; border:1px solid currentColor; border-radius:4px; color:inherit; text-decoration:none;">Siktedyp</a>
+        </nav>
+        """,
+        unsafe_allow_html=True
+)
 
 
 
@@ -234,6 +204,7 @@ with col_tbl:
 # =========================
 # 📈 Plot
 # =========================
+st.markdown('<div id="overview-plot"></div>', unsafe_allow_html=True)
 st.header("Oversiktsplot")
 
 fig, ax = plt.subplots(figsize=(11, 5.5))
@@ -247,30 +218,12 @@ for sheet in selected_sheets:
         skipped_info.append(f"Sheet '{sheet}' missing time column '{time_col}'. Skipped.")
         continue
 
-    # Prepare time & sort
-    #df[time_col] = to_datetime(df[time_col])
-
-    #test
-    df[time_col] = pd.to_datetime(
-        df[time_col]
-            .astype(str)
-            .str.strip(),
-        errors="coerce", format="mixed"
-    )
-
+    df[time_col] = to_datetime(df[time_col].astype(str).str.strip())
     df = df[df[time_col].notna()].copy()
-
-    df = df.sort_values(time_col)
-             
-
-
-    df = df[df[time_col].notna()]
     if df.empty:
         skipped_info.append(f"Sheet '{sheet}' has no valid time values after parsing. Skipped.")
         continue
-    df = df.sort_values(by=time_col)
-
-    
+    df = df.sort_values(time_col)
 
     for y in y_cols:
         if y not in df.columns:
@@ -278,7 +231,7 @@ for sheet in selected_sheets:
             continue
 
         y_series = to_numeric(df[y])
-        mask = df[time_col].notna() & y_series.notna()
+        mask = y_series.notna()
         if not mask.any():
             skipped_info.append(f"Sheet '{sheet}' | '{y}': no valid numeric data to plot.")
             continue
@@ -325,6 +278,8 @@ if skipped_info:
 # =========================
 # 📆 Plot for selected years
 # =========================
+st.markdown('<div id="year-comparison-plot"></div>', unsafe_allow_html=True)
+st.markdown('<div id="year-comparison-plot"></div>', unsafe_allow_html=True)
 st.header("Sammenligning av valgte år")
 
 # Find available years for the selected stations
@@ -463,14 +418,6 @@ else:
                 pd.Timestamp("2000-01-01"),
                 pd.Timestamp("2000-12-31")
             )
-
-            years_text = ", ".join(
-                str(year) for year in sorted(selected_years)
-            )
-
-            #ax_year.set_title(
-            #    f"Sammenligning av år: {years_text}"
-            #)
 
             ax_year.set_xlabel("Måned")
 
@@ -1087,6 +1034,10 @@ col_winter, col_summer = st.columns(
 
 with col_winter:
 
+    st.markdown(
+        '<div id="winter-average-plot"></div>',
+        unsafe_allow_html=True
+    )
     st.pyplot(
         fig_winter,
         width="stretch"
@@ -1104,6 +1055,10 @@ with col_winter:
 
 with col_summer:
 
+    st.markdown(
+        '<div id="summer-average-plot"></div>',
+        unsafe_allow_html=True
+    )
     st.pyplot(
         fig_summer,
         width="stretch"
@@ -1121,3 +1076,79 @@ with col_summer:
 
 plt.close(fig_winter)
 plt.close(fig_summer)
+
+
+# =========================
+# Siktedyp
+# =========================
+st.markdown('<div id="siktedyp-plot"></div>', unsafe_allow_html=True)
+st.header("Siktedyp")
+
+try:
+    siktedyp_data = next(iter(load_excel_all_sheets(SIKTEDYP_FILE).values())).copy()
+except Exception as error:
+    st.error(f"Kunne ikke lese Siktedyp.xlsx: {error}")
+else:
+    required_columns = {"Betegnelse", "Verdi", "Tid_provetak"}
+    missing_columns = required_columns - set(siktedyp_data.columns)
+
+    if missing_columns:
+        st.error(
+            "Siktedyp.xlsx mangler kolonner: "
+            + ", ".join(sorted(missing_columns))
+        )
+    else:
+        siktedyp_data["Betegnelse"] = (
+            siktedyp_data["Betegnelse"]
+            .astype("string")
+            .str.strip()
+        )
+        betegnelse_options = sorted(
+            siktedyp_data["Betegnelse"].dropna().unique().tolist()
+        )
+        selected_betegnelser = st.multiselect(
+            "Velg en eller flere betegnelser",
+            options=betegnelse_options,
+            default=betegnelse_options[:1],
+            key="siktedyp_betegnelser"
+        )
+
+        if not selected_betegnelser:
+            st.warning("Velg minst én betegnelse for å vise siktedyp.")
+        else:
+            siktedyp_data["plot_date"] = to_datetime(
+                siktedyp_data["Tid_provetak"]
+            )
+            siktedyp_data["plot_value"] = to_numeric(
+                siktedyp_data["Verdi"]
+            )
+            fig_siktedyp, ax_siktedyp = plt.subplots(figsize=(11, 5.5))
+            plotted_count = 0
+
+            for betegnelse in selected_betegnelser:
+                series_data = siktedyp_data[
+                    siktedyp_data["Betegnelse"] == betegnelse
+                ].dropna(subset=["plot_date", "plot_value"])
+                series_data = series_data.sort_values("plot_date")
+
+                if series_data.empty:
+                    continue
+
+                ax_siktedyp.plot(
+                    series_data["plot_date"],
+                    series_data["plot_value"],
+                    label=betegnelse
+                )
+                plotted_count += 1
+
+            if plotted_count:
+                ax_siktedyp.set_xlabel("År")
+                ax_siktedyp.set_ylabel("Siktedyp (m)")
+                ax_siktedyp.grid(True, alpha=0.3)
+                ax_siktedyp.legend(frameon=False)
+                fig_siktedyp.autofmt_xdate()
+                st.pyplot(fig_siktedyp, width="stretch")
+            else:
+                st.warning("Ingen gyldige verdier å plotte for valgte betegnelser.")
+
+            plt.close(fig_siktedyp)
