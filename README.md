@@ -12,4 +12,4 @@ The app is organized into three pages:
 
 - **Home** — station map, water-environment codes, and introductory text.
 - **Hydrografisk data** — existing hydrographic plots and data exploration.
-- **Biota data** — placeholder page for future biota plots.
+- **Biota data** — plots benthic indices from the `Bløtbunn-EQR.xlsx` workbook.
