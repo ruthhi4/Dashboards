@@ -1,7 +1,7 @@
 pandas
 numpy
 matplotlib
-pathlib
 openpyxl
 streamlit
 pillow
+pyarrow<25
