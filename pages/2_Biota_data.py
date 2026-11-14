@@ -36,6 +36,13 @@ def load_biota_data(path: Path) -> dict[str, pd.DataFrame]:
         for name, frame in sheets.items()
     }
 
+def to_datetime(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return series
+    try:
+        return pd.to_datetime(series, errors="coerce", format="mixed")
+    except Exception:
+        return pd.to_datetime(pd.Series([], dtype="float64"), errors="coerce")
 
 st.title("Bløtbunnsindekser")
 
@@ -85,9 +92,8 @@ for station in selected_stations:
         if TIME_COLUMN not in sheet_data.columns or selected_index not in sheet_data.columns:
             skipped_series.append(f"{station} ({selected_index})")
             continue
-
         plot_data = sheet_data[[TIME_COLUMN, selected_index]].copy()
-        plot_data[TIME_COLUMN] = pd.to_datetime(plot_data[TIME_COLUMN], errors="coerce")
+        plot_data[TIME_COLUMN] = to_datetime(plot_data[TIME_COLUMN])
         plot_data[selected_index] = pd.to_numeric(plot_data[selected_index], errors="coerce")
         plot_data = plot_data.dropna(subset=[TIME_COLUMN, selected_index])
         plot_data = plot_data.sort_values(TIME_COLUMN)
