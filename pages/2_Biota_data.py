@@ -1,3 +1,4 @@
+from io import BytesIO
 from pathlib import Path
 
 import matplotlib.dates as mdates
@@ -26,11 +27,8 @@ INDEX_BANDS = [
 
 
 @st.cache_data(show_spinner=False)
-def load_biota_data(path: Path) -> dict[str, pd.DataFrame]:
-    if not path.is_file():
-        raise FileNotFoundError(f"File not found: {path.resolve()}")
-
-    sheets = pd.read_excel(path, sheet_name=None, engine="openpyxl")
+def load_biota_data(contents: bytes) -> dict[str, pd.DataFrame]:
+    sheets = pd.read_excel(BytesIO(contents), sheet_name=None, engine="openpyxl")
     return {
         name: frame.rename(columns=lambda column: str(column).strip())
         for name, frame in sheets.items()
@@ -47,9 +45,9 @@ def to_datetime(series: pd.Series) -> pd.Series:
 st.title("Bløtbunnsindekser")
 
 try:
-    biota_sheets = load_biota_data(DATA_FILE)
-except FileNotFoundError as error:
-    st.error(f"Could not load biota data: {error}")
+    biota_sheets = load_biota_data(DATA_FILE.read_bytes())
+except FileNotFoundError:
+    st.error(f"Could not load biota data: File not found: {DATA_FILE.resolve()}")
     st.stop()
 
 if not biota_sheets:
